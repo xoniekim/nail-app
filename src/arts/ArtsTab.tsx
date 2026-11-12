@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Board from '../board/Board'
 import { exportImage, renderBoard } from '../render'
-import { defaultTitle, newDraft, uid, type Art, type Draft, type Nail } from '../store'
+import { bgOf, boardHOf, defaultTitle, newDraft, uid, type Art, type Draft, type Nail } from '../store'
 
 interface Props {
   arts: Art[]
@@ -9,7 +9,7 @@ interface Props {
   draft: Draft
   onDraft: (d: Draft) => void
   nails: Nail[]
-  categories: string[]
+  tags: string[]
   onNails: (n: Nail[]) => void
   notify: (msg: string) => void
 }
@@ -17,7 +17,7 @@ interface Props {
 const monthLabel = (m: string) => `${m.slice(0, 4)}년 ${Number(m.slice(5))}월`
 
 /** 이달의 아트 탭: 목록 → 상세 / 수정(캔버스) / 새로 만들기 */
-export default function ArtsTab({ arts, onArts, draft, onDraft, nails, categories, onNails, notify }: Props) {
+export default function ArtsTab({ arts, onArts, draft, onDraft, nails, tags, onNails, notify }: Props) {
   const [view, setView] = useState<'list' | 'board'>('list')
   const [detail, setDetail] = useState<Art | null>(null)
   const [saving, setSaving] = useState(false)
@@ -40,7 +40,7 @@ export default function ArtsTab({ arts, onArts, draft, onDraft, nails, categorie
   const edit = (a: Art) => {
     if (!okToDiscard(a.id)) return
     if (!(inProgress && draft.artId === a.id)) {
-      onDraft({ artId: a.id, title: a.title, month: a.month, items: a.items, dirty: false })
+      onDraft({ artId: a.id, title: a.title, month: a.month, items: a.items, bg: bgOf(a), boardH: boardHOf(a), dirty: false })
     }
     setDetail(null)
     setView('board')
@@ -62,7 +62,7 @@ export default function ArtsTab({ arts, onArts, draft, onDraft, nails, categorie
           onSaveArt={() => setSaving(true)}
           onBack={() => setView('list')}
           nails={nails}
-          categories={categories}
+          tags={tags}
           onNails={onNails}
         />
         {saving && (
@@ -74,10 +74,10 @@ export default function ArtsTab({ arts, onArts, draft, onDraft, nails, categorie
             onSave={async (title, month) => {
               // 한 달에 하나: 같은 달 아트가 있으면 그 자리에 덮어쓰기
               const sameMonth = arts.find((a) => a.month === month)
-              const image = await renderBoard(draft.items)
+              const image = await renderBoard(draft.items, boardHOf(draft), bgOf(draft))
               const now = Date.now()
               const art: Art = {
-                id: sameMonth?.id ?? uid(), title, month, items: draft.items, image,
+                id: sameMonth?.id ?? uid(), title, month, items: draft.items, bg: bgOf(draft), boardH: boardHOf(draft), image,
                 createdAt: sameMonth?.createdAt ?? now, updatedAt: now,
               }
               onArts([art, ...arts.filter((a) => a.id !== art.id)])

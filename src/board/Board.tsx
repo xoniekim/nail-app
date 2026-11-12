@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { BOARD_H, BOARD_W, uid, type BoardItem, type Draft, type Nail } from '../store'
+import { BOARD_W, bgOf, boardHOf, uid, type BoardItem, type Draft, type Nail } from '../store'
 import { imageSize } from '../image'
 import ImageEditor, { type EditResult } from './ImageEditor'
 import PalettePicker from '../palette/PalettePicker'
@@ -10,7 +10,7 @@ interface Props {
   onSaveArt: () => void
   onBack: () => void
   nails: Nail[]
-  categories: string[]
+  tags: string[]
   onNails: (n: Nail[]) => void
 }
 
@@ -21,6 +21,10 @@ type Gesture = {
 } | null
 
 const MIN_W = 50 // 논리 단위 최소 폭
+// 새 아트보드 높이 범위 (폭 1000 기준) — 화면 비율을 따르되 너무 극단적이지 않게
+const MIN_BOARD_H = 500, MAX_BOARD_H = 2400
+// 배경색 추천
+const BG_COLORS = ['#ffffff', '#fdf7f8', '#f8e1e7', '#ead7f5', '#dcecfb', '#dff3ea', '#f3e9dc', '#e9e9e9', '#222222']
 
 /**
  * 편집 결과를 캔버스 네일에 반영.
@@ -47,39 +51,55 @@ function applyEdit(it: BoardItem, r: EditResult): BoardItem {
 // 새로 올린 네일 배치: 한 줄에 5개(조합 하나)씩
 const COL_W = 170, COL_GAP = 25, ROW_H = 260
 
-export default function Board({ draft, onChange, onSaveArt, onBack, nails, categories, onNails }: Props) {
+export default function Board({ draft, onChange, onSaveArt, onBack, nails, tags, onNails }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [live, setLive] = useState<BoardItem[] | null>(null) // 드래그 중 임시 상태 (끝나면 저장)
   const [editing, setEditing] = useState<BoardItem | null>(null)
   const [picking, setPicking] = useState(false)
+  const [bgOpen, setBgOpen] = useState(false)
   const [rotating, setRotating] = useState(false) // 회전 중 각도 표시용
-  const [k, setK] = useState(1) // 화면px / 논리 단위
+  const [area, setArea] = useState({ w: 0, h: 0 }) // 아트보드가 쓸 수 있는 화면 영역
+  const areaRef = useRef<HTMLDivElement>(null)
   const boardRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture>(null)
 
   const items = live ?? draft.items
   const sel = items.find((i) => i.id === selected) ?? null
+  const boardH = boardHOf(draft)
+  const bg = bgOf(draft)
+  // 화면px / 논리 단위: 영역 안에 보드가 꽉 차도록
+  const k = area.w ? Math.min(area.w / BOARD_W, area.h / boardH) : 0
 
-  // 첫 그리기 전에 크기를 재야 사진이 잠깐 크게 보이는 깜빡임이 없음
+  // 첫 그리기 전에 영역을 재야 깜빡임이 없음
   useLayoutEffect(() => {
-    const el = boardRef.current
+    const el = areaRef.current
     if (!el) return
-    setK(el.clientWidth / BOARD_W)
-    const ro = new ResizeObserver(() => setK(el.clientWidth / BOARD_W))
+    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // 아직 아무것도 없는 새 아트보드는 지금 화면 비율에 맞춰 상하좌우 꽉 차게
+  const isFresh = draft.items.length === 0 && !draft.artId
+  useLayoutEffect(() => {
+    if (!isFresh || !area.w || !area.h) return
+    const h = Math.round(Math.min(MAX_BOARD_H, Math.max(MIN_BOARD_H, (BOARD_W * area.h) / area.w)))
+    if (Math.abs(h - boardH) > 4) onChange({ ...draft, boardH: h })
+  }, [isFresh, area.w, area.h]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commit = (next: BoardItem[]) => onChange({ ...draft, items: next })
 
   /** 팔레트에서 고른 네일을 5개씩 한 줄로 차례차례 배치 (겹쳐도 나중에 옮기면 됨) */
   const addNails = async (picked: Nail[]) => {
     const added: BoardItem[] = []
+    const rows = Math.max(1, Math.floor((boardH - COL_GAP) / ROW_H))
     for (const nail of picked) {
       const { w, h } = await imageSize(nail.src).catch(() => ({ w: 3, h: 4 }))
       const n = draft.items.length + added.length
       const iw = COL_W, ih = (iw * h) / w
-      const col = n % 5, row = Math.floor(n / 5) % 5
+      const col = n % 5, row = Math.floor(n / 5) % rows
       added.push({
         id: uid(), nailId: nail.id, src: nail.src, original: nail.original,
         x: COL_GAP + col * (COL_W + COL_GAP), y: COL_GAP + row * ROW_H, w: iw, h: ih,
@@ -97,6 +117,7 @@ export default function Board({ draft, onChange, onSaveArt, onBack, nails, categ
     e.preventDefault()
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     setSelected(item.id)
+    setBgOpen(false)
     // 터치한 네일을 맨 위로
     const front = [...draft.items.filter((i) => i.id !== item.id), item]
     setLive(front)
@@ -121,7 +142,7 @@ export default function Board({ draft, onChange, onSaveArt, onBack, nails, categ
       next = {
         ...o,
         x: Math.min(BOARD_W - o.w * 0.2, Math.max(-o.w * 0.8, o.x + dx)),
-        y: Math.min(BOARD_H - o.h * 0.2, Math.max(-o.h * 0.8, o.y + dy)),
+        y: Math.min(boardH - o.h * 0.2, Math.max(-o.h * 0.8, o.y + dy)),
       }
     } else if (g.mode === 'resize') {
       // 회전된 네일 기준 방향으로 끈 거리 계산 → 비율 유지하며 크기 변경, 왼쪽 위 모서리는 고정
@@ -167,74 +188,89 @@ export default function Board({ draft, onChange, onSaveArt, onBack, nails, categ
   })
 
   return (
-    <section className="panel">
-      <div className="board-head">
+    <section className="board-screen">
+      <div className="board-bar">
         <button className="btn small back-btn" onClick={onBack} aria-label="목록으로">‹ 목록</button>
         <input className="title-input" value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })} />
-        <button className="btn primary add-btn" onClick={() => setPicking(true)}>＋ 네일</button>
+        <button className="btn small primary" onClick={() => { setSelected(null); onSaveArt() }} disabled={items.length === 0}>저장</button>
       </div>
-      <p className="hint">
-        {items.length === 0
-          ? '＋를 눌러 팔레트에서 네일을 여러 개 골라 올리세요. 5개씩 한 줄(조합 하나)로 놓여요.'
-          : '네일을 끌어서 옮기고, 터치하면 나오는 아이콘으로 ↘ 크기 · ⟳ 회전 · ✎ 편집(지우개·자르기) · × 삭제를 해요.'}
-      </p>
-
-      <div className="board-wrap">
-        <div
-          ref={boardRef}
-          className="board"
-          onPointerDown={() => setSelected(null)}
-          onPointerMove={move}
-          onPointerUp={end}
-          onPointerCancel={end}
-        >
-          {items.map((it) => (
-            <img
-              key={it.id}
-              src={it.src}
-              alt=""
-              draggable={false}
-              className={`board-item ${it.id === selected ? 'on' : ''}`}
-              style={box(it)}
-              onPointerDown={(e) => start(e, 'move', it)}
-            />
+      <div className="board-tools">
+        <button className="btn small primary" onClick={() => { setBgOpen(false); setPicking(true) }}>＋ 네일</button>
+        <button className={`btn small bg-btn ${bgOpen ? 'on' : ''}`} onClick={() => setBgOpen((v) => !v)}>
+          <span className="swatch" style={{ background: bg }} />배경
+        </button>
+        <span className="muted">네일 {items.length}개</span>
+      </div>
+      {bgOpen && (
+        <div className="bg-pop">
+          {BG_COLORS.map((c) => (
+            <button key={c} className={`swatch big ${bg.toLowerCase() === c ? 'on' : ''}`} style={{ background: c }}
+              aria-label={`배경 ${c}`} onClick={() => onChange({ ...draft, bg: c })} />
           ))}
-          {items.length === 0 && (
-            <button className="board-empty" onPointerDown={(e) => e.stopPropagation()} onClick={() => setPicking(true)}>
-              <span>＋</span>네일 추가
-            </button>
-          )}
+          <label className="swatch big custom" title="직접 고르기" style={{ background: BG_COLORS.includes(bg.toLowerCase()) ? undefined : bg }}>
+            <input type="color" value={bg} onChange={(e) => onChange({ ...draft, bg: e.target.value })} />
+            {BG_COLORS.includes(bg.toLowerCase()) && <span>＋</span>}
+          </label>
         </div>
+      )}
 
-        {sel && (
-          // 아이콘들도 네일과 같이 회전
-          <div className="handles" style={box(sel)}>
-            <button className="handle h-edit" aria-label="편집 (지우개·자르기)"
-              onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditing(sel)}>✎</button>
-            <button className="handle h-del" aria-label="삭제"
-              onPointerDown={(e) => e.stopPropagation()} onClick={() => remove(sel.id)}>×</button>
-            <div className="handle h-rotate" aria-label="회전" role="button"
-              onPointerDown={(e) => start(e, 'rotate', sel)}
-              onPointerMove={move} onPointerUp={end} onPointerCancel={end}>⟳</div>
-            <div className="handle h-resize" aria-label="크기 조절" role="button"
-              onPointerDown={(e) => start(e, 'resize', sel)}
-              onPointerMove={move} onPointerUp={end} onPointerCancel={end}>↘</div>
-            {rotating && (
-              <span className="rot-badge">{Math.round(sel.rotation ?? 0)}°</span>
+      <div className="board-area" ref={areaRef}>
+        {k > 0 && (
+          <div className="board-wrap" style={{ width: BOARD_W * k, height: boardH * k }}>
+            <div
+              ref={boardRef}
+              className="board"
+              style={{ background: bg }}
+              onPointerDown={() => { setSelected(null); setBgOpen(false) }}
+              onPointerMove={move}
+              onPointerUp={end}
+              onPointerCancel={end}
+            >
+              {items.map((it) => (
+                <img
+                  key={it.id}
+                  src={it.src}
+                  alt=""
+                  draggable={false}
+                  className={`board-item ${it.id === selected ? 'on' : ''}`}
+                  style={box(it)}
+                  onPointerDown={(e) => start(e, 'move', it)}
+                />
+              ))}
+              {items.length === 0 && (
+                <button className="board-empty" onPointerDown={(e) => e.stopPropagation()} onClick={() => setPicking(true)}>
+                  <span>＋</span>네일 추가
+                  <small>팔레트에서 여러 개 골라 올려요. 5개씩 한 줄(조합 하나)로 놓이고, 터치하면 크기·회전·편집 아이콘이 나와요.</small>
+                </button>
+              )}
+            </div>
+
+            {sel && (
+              // 아이콘들도 네일과 같이 회전
+              <div className="handles" style={box(sel)}>
+                <button className="handle h-edit" aria-label="편집 (지우개·자르기)"
+                  onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditing(sel)}>✎</button>
+                <button className="handle h-del" aria-label="삭제"
+                  onPointerDown={(e) => e.stopPropagation()} onClick={() => remove(sel.id)}>×</button>
+                <div className="handle h-rotate" aria-label="회전" role="button"
+                  onPointerDown={(e) => start(e, 'rotate', sel)}
+                  onPointerMove={move} onPointerUp={end} onPointerCancel={end}>⟳</div>
+                <div className="handle h-resize" aria-label="크기 조절" role="button"
+                  onPointerDown={(e) => start(e, 'resize', sel)}
+                  onPointerMove={move} onPointerUp={end} onPointerCancel={end}>↘</div>
+                {rotating && (
+                  <span className="rot-badge">{Math.round(sel.rotation ?? 0)}°</span>
+                )}
+              </div>
             )}
           </div>
         )}
       </div>
 
-      <div className="actions">
-        <span className="muted">네일 {items.length}개</span>
-        <button className="btn primary" onClick={() => { setSelected(null); onSaveArt() }} disabled={items.length === 0}>이달의 아트 저장</button>
-      </div>
-
       {picking && (
         <PalettePicker
           nails={nails}
-          categories={categories}
+          tags={tags}
           onNails={onNails}
           onCancel={() => setPicking(false)}
           onPick={(picked) => { setPicking(false); addNails(picked) }}

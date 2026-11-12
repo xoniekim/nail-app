@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react'
-import { UNCATEGORIZED, type Nail } from '../store'
-import { ALL, CategoryChips, importNails } from './common'
+import type { Nail } from '../store'
+import { ALL, TagChips, filterNails, importNails, tagsForFilter } from './common'
 
 /** 아트보드에 올릴 네일을 팔레트에서 여러 개 고르기 (누른 순서대로 번호) */
-export default function PalettePicker({ nails, categories, onNails, onCancel, onPick }: {
+export default function PalettePicker({ nails, tags, onNails, onCancel, onPick }: {
   nails: Nail[]
-  categories: string[]
+  tags: string[]
   onNails: (n: Nail[]) => void
   onCancel: () => void
   onPick: (picked: Nail[]) => void
@@ -14,7 +14,7 @@ export default function PalettePicker({ nails, categories, onNails, onCancel, on
   const [order, setOrder] = useState<string[]>([])
   const [adding, setAdding] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
-  const shown = filter === ALL ? nails : nails.filter((n) => n.category === filter)
+  const shown = filterNails(nails, filter)
 
   const toggle = (id: string) =>
     setOrder((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]))
@@ -22,7 +22,7 @@ export default function PalettePicker({ nails, categories, onNails, onCancel, on
   const importPhotos = async (files: FileList) => {
     setAdding(files.length)
     try {
-      const { nails: added, failed } = await importNails(files, filter === ALL ? UNCATEGORIZED : filter)
+      const { nails: added, failed } = await importNails(files, tagsForFilter(filter))
       if (added.length) {
         onNails([...added, ...nails])
         setOrder((o) => [...o, ...added.map((n) => n.id)]) // 새로 넣은 사진은 바로 선택
@@ -44,7 +44,7 @@ export default function PalettePicker({ nails, categories, onNails, onCancel, on
         </button>
       </div>
       <div className="picker-body">
-        <CategoryChips nails={nails} categories={categories} value={filter} onChange={setFilter} />
+        <TagChips nails={nails} tags={tags} value={filter} onChange={setFilter} />
         <div className="nail-grid">
           <button className="nail-cell import" disabled={adding > 0} onClick={() => fileRef.current?.click()}>
             <span>＋</span>{adding ? '불러오는 중…' : '사진 불러오기'}

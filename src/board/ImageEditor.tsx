@@ -4,7 +4,8 @@ interface View { s: number; tx: number; ty: number }
 export interface Rect { x: number; y: number; w: number; h: number }
 type Tool = 'erase' | 'crop'
 type Ratio = 'free' | '1:1' | '3:4'
-type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'move'
+type Handle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move'
+const CROP_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 
 /** 편집 결과. 캔버스에서는 crop 정보로 자른 부분이 제자리에 남도록 위치·크기를 맞춘다. */
 export interface EditResult {
@@ -215,20 +216,28 @@ export default function ImageEditor({ item, onCancel, onDone, initialTool = 'era
       setCropRect({ ...o, x: Math.min(W - o.w, Math.max(0, o.x + dx)), y: Math.min(H - o.h, Math.max(0, o.y + dy)) })
       return
     }
-    // 끄는 모서리의 반대쪽 모서리는 고정
-    const right = d.h === 'ne' || d.h === 'se', bottom = d.h === 'sw' || d.h === 'se'
-    const ax = right ? o.x : o.x + o.w, ay = bottom ? o.y : o.y + o.h
-    let w = Math.max(MIN_CROP, o.w + (right ? dx : -dx))
-    let h = Math.max(MIN_CROP, o.h + (bottom ? dy : -dy))
-    // 이미지 밖으로 나가지 않게
-    w = Math.min(w, right ? W - ax : ax)
-    h = Math.min(h, bottom ? H - ay : ay)
+    // 끄는 핸들이 움직이는 변: 모서리는 두 변, 상하좌우 핸들은 한 변. 반대쪽 변은 고정
+    const L = d.h.includes('w'), R = d.h.includes('e'), T = d.h.includes('n'), B = d.h.includes('s')
+    let x0 = o.x, x1 = o.x + o.w, y0 = o.y, y1 = o.y + o.h
+    if (L) x0 = Math.min(Math.max(0, x0 + dx), x1 - MIN_CROP)
+    if (R) x1 = Math.max(Math.min(W, x1 + dx), x0 + MIN_CROP)
+    if (T) y0 = Math.min(Math.max(0, y0 + dy), y1 - MIN_CROP)
+    if (B) y1 = Math.max(Math.min(H, y1 + dy), y0 + MIN_CROP)
+    let w = x1 - x0, h = y1 - y0
     const k = RATIOS[ratio]
     if (k) {
-      // 비율 고정: 더 많이 끈 쪽 기준, 한계 안으로 줄이기
-      if (w / h > k) w = h * k; else h = w / k
+      const horiz = L || R, vert = T || B
+      if (horiz && vert) { if (w / h > k) w = h * k; else h = w / k } // 모서리: 더 많이 끈 쪽 기준
+      else if (horiz) { h = w / k; if (h > H) { h = H; w = h * k } } // 좌우 변: 높이를 비율에 맞춤
+      else { w = h * k; if (w > W) { w = W; h = w / k } } // 상하 변: 폭을 비율에 맞춤
+      // 고정된 변 기준으로 다시 놓고, 안 움직이는 축은 가운데 유지
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2
+      x0 = L ? x1 - w : R ? x0 : cx - w / 2
+      y0 = T ? y1 - h : B ? y0 : cy - h / 2
+      x0 = Math.min(Math.max(0, x0), W - w)
+      y0 = Math.min(Math.max(0, y0), H - h)
     }
-    setCropRect({ x: right ? ax : ax - w, y: bottom ? ay : ay - h, w, h })
+    setCropRect({ x: x0, y: y0, w, h })
   }
 
   const changeRatio = (r: Ratio) => {
@@ -337,7 +346,7 @@ export default function ImageEditor({ item, onCancel, onDone, initialTool = 'era
         {tool === 'crop' && dims.w > 0 && (
           <div className="crop-box" style={cr} onPointerDown={(e) => startCrop(e, 'move')}>
             <div className="crop-lines" />
-            {(['nw', 'ne', 'sw', 'se'] as const).map((h) => (
+            {CROP_HANDLES.map((h) => (
               <div key={h} className={`crop-h ${h}`} onPointerDown={(e) => startCrop(e, h)} />
             ))}
           </div>

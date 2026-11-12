@@ -1,4 +1,4 @@
-import { BOARD_H, BOARD_W, type BoardItem } from './store'
+import { BOARD_W, DEFAULT_BG, DEFAULT_BOARD_H, type BoardItem } from './store'
 
 const OUT_W = 1500 // 저장 이미지 폭(px)
 
@@ -11,13 +11,13 @@ const loadImg = (src: string) =>
   })
 
 /** 아트보드를 화면에 보이는 그대로 한 장의 PNG로 */
-export async function renderBoard(items: BoardItem[]): Promise<string> {
+export async function renderBoard(items: BoardItem[], boardH = DEFAULT_BOARD_H, bg = DEFAULT_BG): Promise<string> {
   const k = OUT_W / BOARD_W
   const c = document.createElement('canvas')
   c.width = OUT_W
-  c.height = Math.round(BOARD_H * k)
+  c.height = Math.round(boardH * k)
   const ctx = c.getContext('2d')!
-  ctx.fillStyle = '#ffffff'
+  ctx.fillStyle = bg
   ctx.fillRect(0, 0, c.width, c.height)
   ctx.imageSmoothingQuality = 'high'
   const imgs = await Promise.all(items.map((i) => loadImg(i.src)))
